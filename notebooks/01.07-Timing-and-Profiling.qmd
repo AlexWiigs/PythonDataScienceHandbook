@@ -1,0 +1,278 @@
+# Profiling and Timing Code
+
+In the process of developing code and creating data processing pipelines, there are often trade-offs you can make between various implementations.
+Early in developing your algorithm, it can be counterproductive to worry about such things. As Donald Knuth famously quipped, "We should forget about small efficiencies, say about 97% of the time: premature optimization is the root of all evil."
+
+But once you have your code working, it can be useful to dig into its efficiency a bit.
+Sometimes it's useful to check the execution time of a given command or set of commands; other times it's useful to examine a multiline process and determine where the bottleneck lies in some complicated series of operations.
+IPython provides access to a wide array of functionality for this kind of timing and profiling of code.
+Here we'll discuss the following IPython magic commands:
+
+- `%time`: Time the execution of a single statement
+- `%timeit`: Time repeated execution of a single statement for more accuracy
+- `%prun`: Run code with the profiler
+- `%lprun`: Run code with the line-by-line profiler
+- `%memit`: Measure the memory use of a single statement
+- `%mprun`: Run code with the line-by-line memory profiler
+
+The last four commands are not bundled with IPython; to use them you'll need to get the `line_profiler` and `memory_profiler` extensions, which we will discuss in the following sections.
+
+## Timing Code Snippets: %timeit and %time
+
+We saw the `%timeit` line magic and `%%timeit` cell magic in the introduction to magic functions in [IPython Magic Commands](01.03-Magic-Commands.ipynb); these can be used to time the repeated execution of snippets of code:
+
+
+```python
+%timeit sum(range(100))
+```
+
+    1.53 µs ± 47.8 ns per loop (mean ± std. dev. of 7 runs, 1000000 loops each)
+
+
+Note that because this operation is so fast, `%timeit` automatically does a large number of repetitions.
+For slower commands, `%timeit` will automatically adjust and perform fewer repetitions:
+
+
+```python
+%%timeit
+total = 0
+for i in range(1000):
+    for j in range(1000):
+        total += i * (-1) ** j
+```
+
+    536 ms ± 15.9 ms per loop (mean ± std. dev. of 7 runs, 1 loop each)
+
+
+Sometimes repeating an operation is not the best option.
+For example, if we have a list that we'd like to sort, we might be misled by a repeated operation; sorting a pre-sorted list is much faster than sorting an unsorted list, so the repetition will skew the result:
+
+
+```python
+import random
+L = [random.random() for i in range(100000)]
+%timeit L.sort()
+```
+
+    1.71 ms ± 334 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+
+For this, the `%time` magic function may be a better choice. It also is a good choice for longer-running commands, when short, system-related delays are unlikely to affect the result.
+Let's time the sorting of an unsorted and a presorted list:
+
+
+```python
+import random
+L = [random.random() for i in range(100000)]
+print("sorting an unsorted list:")
+%time L.sort()
+```
+
+    sorting an unsorted list:
+    CPU times: user 31.3 ms, sys: 686 µs, total: 32 ms
+    Wall time: 33.3 ms
+
+
+
+```python
+print("sorting an already sorted list:")
+%time L.sort()
+```
+
+    sorting an already sorted list:
+    CPU times: user 5.19 ms, sys: 268 µs, total: 5.46 ms
+    Wall time: 14.1 ms
+
+
+Notice how much faster the presorted list is to sort, but notice also how much longer the timing takes with `%time` versus `%timeit`, even for the presorted list!
+This is a result of the fact that `%timeit` does some clever things under the hood to prevent system calls from interfering with the timing.
+For example, it prevents cleanup of unused Python objects (known as *garbage collection*) that might otherwise affect the timing.
+For this reason, `%timeit` results are usually noticeably faster than `%time` results.
+
+For `%time`, as with `%timeit`, using the `%%` cell magic syntax allows timing of multiline scripts:
+
+
+```python
+%%time
+total = 0
+for i in range(1000):
+    for j in range(1000):
+        total += i * (-1) ** j
+```
+
+    CPU times: user 655 ms, sys: 5.68 ms, total: 661 ms
+    Wall time: 710 ms
+
+
+For more information on `%time` and `%timeit`, as well as their available options, use the IPython help functionality (e.g., type `%time?` at the IPython prompt).
+
+## Profiling Full Scripts: %prun
+
+A program is made up of many single statements, and sometimes timing these statements in context is more important than timing them on their own.
+Python contains a built-in code profiler (which you can read about in the Python documentation), but IPython offers a much more convenient way to use this profiler, in the form of the magic function `%prun`.
+
+By way of example, we'll define a simple function that does some calculations:
+
+
+
+
+```python
+def sum_of_lists(N):
+    total = 0
+    for i in range(5):
+        L = [j ^ (j >> i) for j in range(N)]
+        total += sum(L)
+    return total
+```
+
+Now we can call `%prun` with a function call to see the profiled results:
+
+
+```python
+%prun sum_of_lists(1000000)
+```
+
+     
+
+
+             14 function calls in 0.932 seconds
+    
+       Ordered by: internal time
+    
+       ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+            5    0.808    0.162    0.808    0.162 <ipython-input-7-f105717832a2>:4(<listcomp>)
+            5    0.066    0.013    0.066    0.013 {built-in method builtins.sum}
+            1    0.044    0.044    0.918    0.918 <ipython-input-7-f105717832a2>:1(sum_of_lists)
+            1    0.014    0.014    0.932    0.932 <string>:1(<module>)
+            1    0.000    0.000    0.932    0.932 {built-in method builtins.exec}
+            1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+
+
+The result is a table that indicates, in order of total time on each function call, where the execution is spending the most time. In this case, the bulk of the execution time is in the list comprehension inside `sum_of_lists`.
+From here, we could start thinking about what changes we might make to improve the performance of the algorithm.
+
+For more information on `%prun`, as well as its available options, use the IPython help functionality (i.e., type `%prun?` at the IPython prompt).
+
+## Line-by-Line Profiling with %lprun
+
+The function-by-function profiling of `%prun` is useful, but sometimes it's more convenient to have a line-by-line profile report.
+This is not built into Python or IPython, but there is a `line_profiler` package available for installation that can do this.
+Start by using Python's packaging tool, `pip`, to install the `line_profiler` package:
+
+```
+$ pip install line_profiler
+```
+
+Next, you can use IPython to load the `line_profiler` IPython extension, offered as part of this package:
+
+
+```python
+%load_ext line_profiler
+```
+
+Now the `%lprun` command will do a line-by-line profiling of any function. In this case, we need to tell it explicitly which functions we're interested in profiling:
+
+
+```python
+%lprun -f sum_of_lists sum_of_lists(5000)
+```
+
+
+    Timer unit: 1e-06 s
+    
+    Total time: 0.014803 s
+    File: <ipython-input-7-f105717832a2>
+    Function: sum_of_lists at line 1
+    
+    Line #      Hits         Time  Per Hit   % Time  Line Contents
+    ==============================================================
+         1                                           def sum_of_lists(N):
+         2         1          6.0      6.0      0.0      total = 0
+         3         6         13.0      2.2      0.1      for i in range(5):
+         4         5      14242.0   2848.4     96.2          L = [j ^ (j >> i) for j in range(N)]
+         5         5        541.0    108.2      3.7          total += sum(L)
+         6         1          1.0      1.0      0.0      return total
+
+
+The information at the top gives us the key to reading the results: the time is reported in microseconds, and we can see where the program is spending the most time.
+At this point, we may be able to use this information to modify aspects of the script and make it perform better for our desired use case.
+
+For more information on `%lprun`, as well as its available options, use the IPython help functionality (i.e., type `%lprun?` at the IPython prompt).
+
+## Profiling Memory Use: %memit and %mprun
+
+Another aspect of profiling is the amount of memory an operation uses.
+This can be evaluated with another IPython extension, the `memory_profiler`.
+As with the `line_profiler`, we start by `pip`-installing the extension:
+
+```
+$ pip install memory_profiler
+```
+
+Then we can use IPython to load it:
+
+
+```python
+%load_ext memory_profiler
+```
+
+The memory profiler extension contains two useful magic functions: `%memit` (which offers a memory-measuring equivalent of `%timeit`) and `%mprun` (which offers a memory-measuring equivalent of `%lprun`).
+The `%memit` magic function can be used rather simply:
+
+
+```python
+%memit sum_of_lists(1000000)
+```
+
+    peak memory: 141.70 MiB, increment: 75.65 MiB
+
+
+We see that this function uses about 140 MB of memory.
+
+For a line-by-line description of memory use, we can use the `%mprun` magic function.
+Unfortunately, this works only for functions defined in separate modules rather than the notebook itself, so we'll start by using the `%%file` cell magic to create a simple module called `mprun_demo.py`, which contains our `sum_of_lists` function, with one addition that will make our memory profiling results more clear:
+
+
+```python
+%%file mprun_demo.py
+def sum_of_lists(N):
+    total = 0
+    for i in range(5):
+        L = [j ^ (j >> i) for j in range(N)]
+        total += sum(L)
+        del L # remove reference to L
+    return total
+```
+
+    Overwriting mprun_demo.py
+
+
+We can now import the new version of this function and run the memory line profiler:
+
+
+```python
+from mprun_demo import sum_of_lists
+%mprun -f sum_of_lists sum_of_lists(1000000)
+```
+
+    
+
+
+
+    Filename: /Users/jakevdp/github/jakevdp/PythonDataScienceHandbook/notebooks_v2/mprun_demo.py
+    
+    Line #    Mem usage    Increment  Occurences   Line Contents
+    ============================================================
+         1     66.7 MiB     66.7 MiB           1   def sum_of_lists(N):
+         2     66.7 MiB      0.0 MiB           1       total = 0
+         3     75.1 MiB      8.4 MiB           6       for i in range(5):
+         4    105.9 MiB     30.8 MiB     5000015           L = [j ^ (j >> i) for j in range(N)]
+         5    109.8 MiB      3.8 MiB           5           total += sum(L)
+         6     75.1 MiB    -34.6 MiB           5           del L # remove reference to L
+         7     66.9 MiB     -8.2 MiB           1       return total
+
+
+Here, the `Increment` column tells us how much each line affects the total memory budget: observe that when we create and delete the list `L`, we are adding about 30 MB of memory usage.
+This is on top of the background memory usage from the Python interpreter itself.
+
+For more information on `%memit` and `%mprun`, as well as their available options, use the IPython help functionality (e.g., type `%memit?` at the IPython prompt).
